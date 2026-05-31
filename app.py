@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import sqlite3
+from pathlib import Path
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -18,14 +19,17 @@ st.markdown("""
 청년층 가구주(만 20세~39세)의 금융부채, 순자산, 소득분위별 격차, 자산구성 변화를 분석합니다.
 """)
 
-def load_csv_with_encodings(file):
+def load_csv_with_encodings(source):
     encodings = ["utf-8-sig", "cp949", "euc-kr"]
+
     for enc in encodings:
         try:
-            file.seek(0)
-            return pd.read_csv(file, encoding=enc)
+            if hasattr(source, "seek"):
+                source.seek(0)
+            return pd.read_csv(source, encoding=enc)
         except Exception:
             continue
+
     return None
 
 def clean_columns(df):
@@ -39,11 +43,13 @@ def clean_columns(df):
 
 def weighted_median(df, value_col, weight_col):
     df = df[[value_col, weight_col]].dropna().sort_values(value_col)
+
     if df.empty or df[weight_col].sum() == 0:
         return np.nan
 
     cutoff = df[weight_col].sum() / 2
     cumsum = df[weight_col].cumsum()
+
     return df.loc[cumsum >= cutoff, value_col].iloc[0]
 
 def safe_rate(new, old):
@@ -52,9 +58,23 @@ def safe_rate(new, old):
     return ((new - old) / old) * 100
 
 st.sidebar.header("📁 데이터 업로드")
+st.sidebar.caption("파일을 업로드하지 않으면 GitHub 저장소에 포함된 CSV 파일을 자동으로 사용합니다.")
+
 uploaded_2018 = st.sidebar.file_uploader("2018 가구마스터 CSV", type=["csv"])
 uploaded_2021 = st.sidebar.file_uploader("2021 가구마스터 CSV", type=["csv"])
 uploaded_2023 = st.sidebar.file_uploader("2023 가구마스터 CSV", type=["csv"])
+
+default_files = {
+    2018: Path("2018_가구마스터_20260519_52790.csv"),
+    2021: Path("2021_가구마스터_20260519_52790.csv"),
+    2023: Path("2023_가구마스터_20260519_52790.csv"),
+}
+
+uploaded_files = {
+    2018: uploaded_2018,
+    2021: uploaded_2021,
+    2023: uploaded_2023,
+}
 
 required_cols = [
     "조사연도",
@@ -77,23 +97,27 @@ income_candidates = [
     "소득5분위"
 ]
 
-file_dict = {
-    2018: uploaded_2018,
-    2021: uploaded_2021,
-    2023: uploaded_2023
-}
-
-if not all(file_dict.values()):
-    st.info("2018, 2021, 2023년 CSV 파일을 모두 업로드해 주세요.")
-    st.stop()
-
 dfs = {}
 
-for year, file in file_dict.items():
-    df = load_csv_with_encodings(file)
+for year in [2018, 2021, 2023]:
+    uploaded_file = uploaded_files[year]
+    default_file = default_files[year]
+
+    if uploaded_file is not None:
+        df = load_csv_with_encodings(uploaded_file)
+        data_source = "업로드 파일"
+    elif default_file.exists():
+        df = load_csv_with_encodings(default_file)
+        data_source = "GitHub 기본 파일"
+    else:
+        df = None
+        data_source = None
 
     if df is None:
-        st.error(f"{year}년 CSV 파일을 읽을 수 없습니다. 인코딩을 확인해 주세요.")
+        st.error(
+            f"{year}년 데이터를 불러올 수 없습니다. "
+            f"파일을 업로드하거나 GitHub 저장소 루트에 `{default_file.name}` 파일이 있는지 확인해 주세요."
+        )
         st.stop()
 
     df = clean_columns(df)
@@ -119,12 +143,13 @@ for year, file in file_dict.items():
 
     dfs[year] = df[required_cols].copy()
 
+st.success("데이터 로드 완료: 업로드 파일 또는 GitHub 저장소의 기본 CSV 파일을 사용했습니다.")
+
 full_df = pd.concat(
     [dfs[2018], dfs[2021], dfs[2023]],
     ignore_index=True
 )
 
-# Q1~Q5 형태의 소득분위코드를 숫자 1~5로 변환
 full_df["소득5분위코드"] = (
     full_df["소득5분위코드"]
     .astype(str)
