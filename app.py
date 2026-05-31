@@ -124,6 +124,13 @@ full_df = pd.concat(
     ignore_index=True
 )
 
+# Q1~Q5 형태의 소득분위코드를 숫자 1~5로 변환
+full_df["소득5분위코드"] = (
+    full_df["소득5분위코드"]
+    .astype(str)
+    .str.extract(r"(\d+)")[0]
+)
+
 numeric_cols = [
     "조사연도",
     "가중값",
